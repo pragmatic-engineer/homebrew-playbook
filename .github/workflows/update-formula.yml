@@ -1,0 +1,116 @@
+name: update-formula
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Check for a newer playbook release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest_tag="$(gh release view --repo pragmatic-engineer/playbook --json tagName -q .tagName)"
+          latest_version="${latest_tag#v}"
+          current_version="$(grep -m1 'playbook-[0-9]' Formula/playbook.rb | sed -n 's#.*playbook-\([0-9][^-]*\)-.*#\1#p')"
+          echo "latest=$latest_version" >> "$GITHUB_OUTPUT"
+          echo "current=$current_version" >> "$GITHUB_OUTPUT"
+          if [ "$latest_version" = "$current_version" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Regenerate the formula from the release's own SHA256SUMS
+        if: steps.check.outputs.up_to_date == 'false'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          SUMS="$(curl -sL --fail "https://github.com/pragmatic-engineer/playbook/releases/download/v${VERSION}/SHA256SUMS")"
+          get_sha() {
+            echo "$SUMS" | grep " playbook-${VERSION}-$1\$" | cut -d' ' -f1
+          }
+          MACOS_ARM="$(get_sha aarch64-apple-darwin)"
+          MACOS_X86="$(get_sha x86_64-apple-darwin)"
+          LINUX_ARM="$(get_sha aarch64-unknown-linux-musl)"
+          LINUX_X86="$(get_sha x86_64-unknown-linux-musl)"
+          if [ -z "$MACOS_ARM" ] || [ -z "$MACOS_X86" ] || [ -z "$LINUX_ARM" ] || [ -z "$LINUX_X86" ]; then
+            echo "::error::missing checksum for one or more of the 4 Homebrew-relevant platforms in v${VERSION}'s SHA256SUMS; refusing to write a partial formula" >&2
+            exit 1
+          fi
+          cat > Formula/playbook.rb << 'RUBYHEADER'
+          class Playbook < Formula
+            desc "Claude Code plugin toolkit: hooks, launcher, and installer in one binary"
+            homepage "https://github.com/pragmatic-engineer/playbook"
+            license "MIT"
+
+          RUBYHEADER
+          {
+            printf '  on_macos do\n'
+            printf '    if Hardware::CPU.arm?\n'
+            printf '      url "https://github.com/pragmatic-engineer/playbook/releases/download/v%s/playbook-%s-aarch64-apple-darwin"\n' "$VERSION" "$VERSION"
+            printf '      sha256 "%s"\n' "$MACOS_ARM"
+            printf '    else\n'
+            printf '      url "https://github.com/pragmatic-engineer/playbook/releases/download/v%s/playbook-%s-x86_64-apple-darwin"\n' "$VERSION" "$VERSION"
+            printf '      sha256 "%s"\n' "$MACOS_X86"
+            printf '    end\n'
+            printf '  end\n'
+            printf '\n'
+            printf '  on_linux do\n'
+            printf '    if Hardware::CPU.arm?\n'
+            printf '      url "https://github.com/pragmatic-engineer/playbook/releases/download/v%s/playbook-%s-aarch64-unknown-linux-musl"\n' "$VERSION" "$VERSION"
+            printf '      sha256 "%s"\n' "$LINUX_ARM"
+            printf '    else\n'
+            printf '      url "https://github.com/pragmatic-engineer/playbook/releases/download/v%s/playbook-%s-x86_64-unknown-linux-musl"\n' "$VERSION" "$VERSION"
+            printf '      sha256 "%s"\n' "$LINUX_X86"
+            printf '    end\n'
+            printf '  end\n'
+          } >> Formula/playbook.rb
+          cat >> Formula/playbook.rb << 'RUBYFOOTER'
+
+            def install
+              bin.install Dir["playbook-*"].first => "playbook"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/playbook --version")
+            end
+          end
+          RUBYFOOTER
+
+      - name: Open a PR
+        if: steps.check.outputs.up_to_date == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet Formula/playbook.rb; then
+            echo "no changes after regeneration, nothing to open"
+            exit 0
+          fi
+          BRANCH="bump-v${VERSION}"
+          git checkout -b "$BRANCH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/playbook.rb
+          git commit -m "playbook ${VERSION}"
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --title "playbook ${VERSION}" \
+            --body "Bumps the formula to playbook v${VERSION}. URLs and checksums regenerated from that release's own SHA256SUMS, not hand-edited." \
+            --head "$BRANCH"
