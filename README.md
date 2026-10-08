@@ -29,6 +29,8 @@ Covers macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64, static musl 
 
 ## Keeping the formula current
 
-Nothing in this repo updates the formula. The `publish-channels` job in the playbook release workflow renders `Formula/playbook.rb` from the release's own `SHA256SUMS` and pushes it here when a tag is published. It skips the push if the tag isn't the latest release. Don't edit the formula's URLs or checksums by hand.
+The `bump` workflow runs daily at 06:17 UTC and can be started by hand. It reads the latest `pragmatic-engineer/playbook` release and compares it with the formula. If the release is newer, it rewrites the URLs and checksums from that release's own `SHA256SUMS` (`.github/scripts/bump-formula.sh`), runs `brew audit --strict`, `brew install` and `brew test`, pushes the commit to `main`, and starts the full `tests` matrix. Don't edit the formula's URLs or checksums by hand.
 
-If the formula is behind the latest release, check the `publish-channels` run for that tag in `pragmatic-engineer/playbook`.
+The `tests` workflow in this repo runs `brew audit --strict`, `brew install` and `brew test` on Linux and macOS (arm64 and x86_64) for every push, pull request and weekly. Bottles are not built, because the formula installs prebuilt binaries.
+
+If the formula is behind the latest release, check the latest `bump` run in this repo.

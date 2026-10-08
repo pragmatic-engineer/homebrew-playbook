@@ -1,0 +1,86 @@
+name: bump
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Check out the tap
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Find the latest release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo pragmatic-engineer/playbook --json tagName --jq .tagName)"
+          latest="${tag#v}"
+          current="$(sed -n 's#.*download/v\([0-9][0-9.]*\)/.*#\1#p' Formula/playbook.rb | head -n1)"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          if [ "$latest" = "$current" ]; then
+            echo "Formula is current at ${current}."
+            echo "outdated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Formula is at ${current}, latest release is ${latest}."
+            echo "outdated=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update the formula from the release checksums
+        if: steps.release.outputs.outdated == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.latest }}
+        run: .github/scripts/bump-formula.sh "$VERSION"
+
+      - name: Set up Homebrew
+        if: steps.release.outputs.outdated == 'true'
+        uses: Homebrew/actions/setup-homebrew@9ffcbcc2c89631400988e8d4b1e3ac17dbbe3fe9 # main
+
+      - name: Link the checkout as the tap
+        if: steps.release.outputs.outdated == 'true'
+        run: |
+          tap_dir="$(brew --repository)/Library/Taps/pragmatic-engineer"
+          mkdir -p "$tap_dir"
+          ln -sfn "$GITHUB_WORKSPACE" "$tap_dir/homebrew-tap"
+
+      - name: Verify the new formula
+        if: steps.release.outputs.outdated == 'true'
+        run: |
+          brew audit --strict --online pragmatic-engineer/tap/playbook
+          brew install --verbose pragmatic-engineer/tap/playbook
+          brew test pragmatic-engineer/tap/playbook
+
+      - name: Commit and push
+        if: steps.release.outputs.outdated == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.latest }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/playbook.rb
+          git commit -m "playbook ${VERSION}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: Run the full test matrix on the new formula
+        if: steps.release.outputs.outdated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run tests.yml --ref main
