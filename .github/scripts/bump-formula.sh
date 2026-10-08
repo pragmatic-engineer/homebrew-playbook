@@ -35,4 +35,10 @@ for target in "${targets[@]}"; do
   mv "${tmp}.new" "$tmp"
 done
 
+rewritten="$(grep -c "/download/v${version}/playbook-${version}-" "$tmp" || true)"
+if [[ "$rewritten" -ne ${#targets[@]} ]]; then
+  echo "::error::expected ${#targets[@]} url lines for v${version} after the rewrite, found ${rewritten}. The formula layout changed. Refusing to write." >&2
+  exit 1
+fi
+
 cp "$tmp" "$formula"

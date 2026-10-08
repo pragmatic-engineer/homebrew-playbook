@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Check out the tap
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
 
       - name: Find the latest release
         id: release
@@ -57,7 +59,9 @@ jobs:
         run: |
           tap_dir="$(brew --repository)/Library/Taps/pragmatic-engineer"
           mkdir -p "$tap_dir"
-          ln -sfn "$GITHUB_WORKSPACE" "$tap_dir/homebrew-tap"
+          rm -rf "$tap_dir/homebrew-tap"
+          ln -s "$GITHUB_WORKSPACE" "$tap_dir/homebrew-tap"
+          test "$(realpath "$(brew --repository pragmatic-engineer/tap)")" = "$(realpath "$GITHUB_WORKSPACE")"
 
       - name: Verify the new formula
         if: steps.release.outputs.outdated == 'true'
