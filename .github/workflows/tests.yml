@@ -1,0 +1,66 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@9ffcbcc2c89631400988e8d4b1e3ac17dbbe3fe9 # main
+
+      - name: Check out the tap
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Audit and style check
+        run: |
+          brew test-bot --only-cleanup-before
+          brew test-bot --only-setup
+          brew test-bot --only-tap-syntax
+
+  install:
+    needs: syntax
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@9ffcbcc2c89631400988e8d4b1e3ac17dbbe3fe9 # main
+
+      - name: Check out the tap
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Link the checkout as the tap
+        run: |
+          tap_dir="$(brew --repository)/Library/Taps/pragmatic-engineer"
+          mkdir -p "$tap_dir"
+          rm -rf "$tap_dir/homebrew-tap"
+          ln -s "$GITHUB_WORKSPACE" "$tap_dir/homebrew-tap"
+
+      - name: Audit the formula
+        run: brew audit --strict --online pragmatic-engineer/tap/playbook
+
+      - name: Install the formula
+        run: brew install --verbose pragmatic-engineer/tap/playbook
+
+      - name: Test the formula
+        run: brew test pragmatic-engineer/tap/playbook
