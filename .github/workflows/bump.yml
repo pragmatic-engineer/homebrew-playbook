@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Check out the tap
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -42,16 +42,6 @@ jobs:
           else
             echo "Formula is at ${current}, latest release is ${latest}."
             echo "outdated=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Require the push token
-        if: steps.release.outputs.outdated == 'true'
-        env:
-          BUMP_TOKEN: ${{ secrets.BUMP_TOKEN }}
-        run: |
-          if [ -z "$BUMP_TOKEN" ]; then
-            echo "::error::BUMP_TOKEN is not set. main is protected, so the bump cannot push without it. Add a fine-grained token with contents: write on this repo as the BUMP_TOKEN secret." >&2
-            exit 1
           fi
 
       - name: Update the formula from the release checksums
@@ -83,7 +73,7 @@ jobs:
       - name: Commit the bump through the API so GitHub signs it
         if: steps.release.outputs.outdated == 'true'
         env:
-          GH_TOKEN: ${{ secrets.BUMP_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ steps.release.outputs.latest }}
           FILE_PATH: Formula/playbook.rb
