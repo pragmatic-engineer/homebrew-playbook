@@ -29,7 +29,7 @@ Covers macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64, static musl 
 
 ## Keeping the formula current
 
-The `bump` workflow runs daily at 06:17 UTC and can be started by hand. It reads the latest `pragmatic-engineer/playbook` release and compares it with the formula. If the release is newer, it rewrites the URLs and checksums from that release's own `SHA256SUMS` (`.github/scripts/bump-formula.sh`), runs `brew audit --strict`, `brew install` and `brew test`, and creates the commit on `main` through the GitHub API with the `BUMP_TOKEN` secret. GitHub signs that commit, so it shows as verified. The push starts the full `tests` matrix. Don't edit the formula's URLs or checksums by hand.
+The `bump` workflow runs daily at 06:17 UTC and can be started by hand. It reads the latest `pragmatic-engineer/playbook` release and compares it with the formula. If the release is newer, it rewrites the URLs and checksums from that release's own `SHA256SUMS` (`.github/scripts/bump-formula.sh`), runs `brew audit --strict`, `brew install` and `brew test`, and creates the commit on `main` through the GitHub API with the workflow's own `GITHUB_TOKEN`. The GitHub Actions app is a bypass actor on the `protect-main` ruleset, so no stored secret is needed. GitHub signs that commit, so it shows as verified. A push made with `GITHUB_TOKEN` does not start the `tests` matrix, which is why the workflow audits, installs and tests the formula before it commits. Don't edit the formula's URLs or checksums by hand.
 
 The `tests` workflow in this repo runs `brew audit --strict`, `brew install` and `brew test` on Linux and macOS (arm64 and x86_64) for every push, pull request and weekly. Bottles are not built, because the formula installs prebuilt binaries.
 
