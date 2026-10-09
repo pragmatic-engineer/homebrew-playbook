@@ -79,7 +79,6 @@ jobs:
           REPO: ${{ github.repository }}
           VERSION: ${{ steps.release.outputs.latest }}
           FILE_PATH: Formula/playbook.rb
-          CHECKS: tests.yml
         run: |
           set -euo pipefail
           branch="bump/v${VERSION}"
