@@ -50,7 +50,10 @@ jobs:
         if: steps.release.outputs.outdated == 'true'
         env:
           VERSION: ${{ steps.release.outputs.latest }}
-        run: .github/scripts/bump-formula.sh "$VERSION"
+        run: |
+          .github/scripts/bump-formula.sh "$VERSION"
+          # Set up Homebrew resets the checkout, so keep the edited formula aside.
+          cp Formula/playbook.rb "$RUNNER_TEMP/playbook.rb"
 
       - name: Set up Homebrew
         if: steps.release.outputs.outdated == 'true'
@@ -78,9 +81,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ steps.release.outputs.latest }}
-          FILE_PATH: Formula/playbook.rb
+          FILE_PATH: ${{ runner.temp }}/playbook.rb
+          TARGET_PATH: Formula/playbook.rb
         run: |
           set -euo pipefail
+          if ! grep -q "/download/v${VERSION}/" "$FILE_PATH"; then
+            echo "::error::the saved formula does not point at v${VERSION}. Refusing to commit an empty bump." >&2
+            exit 1
+          fi
           branch="bump/v${VERSION}"
           title="chore(deps): bump playbook to ${VERSION}"
 
@@ -94,7 +102,7 @@ jobs:
           gh api -X POST "repos/${REPO}/git/refs" -f "ref=refs/heads/${branch}" -f "sha=${head}" >/dev/null
           jq -n \
             --arg repo "$REPO" --arg branch "$branch" --arg head "$head" --arg msg "$title" \
-            --arg path "$FILE_PATH" --arg content "$(base64 < "$FILE_PATH" | tr -d '\n')" \
+            --arg path "$TARGET_PATH" --arg content "$(base64 < "$FILE_PATH" | tr -d '\n')" \
             '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
               variables: {input: {
                 branch: {repositoryNameWithOwner: $repo, branchName: $branch},
