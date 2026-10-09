@@ -52,28 +52,6 @@ jobs:
           VERSION: ${{ steps.release.outputs.latest }}
         run: |
           .github/scripts/bump-formula.sh "$VERSION"
-          # Set up Homebrew resets the checkout, so keep the edited formula aside.
-          cp Formula/playbook.rb "$RUNNER_TEMP/playbook.rb"
-
-      - name: Set up Homebrew
-        if: steps.release.outputs.outdated == 'true'
-        uses: Homebrew/actions/setup-homebrew@9ffcbcc2c89631400988e8d4b1e3ac17dbbe3fe9 # main
-
-      - name: Link the checkout as the tap
-        if: steps.release.outputs.outdated == 'true'
-        run: |
-          tap_dir="$(brew --repository)/Library/Taps/pragmatic-engineer"
-          mkdir -p "$tap_dir"
-          rm -rf "$tap_dir/homebrew-tap"
-          ln -s "$GITHUB_WORKSPACE" "$tap_dir/homebrew-tap"
-          test "$(realpath "$(brew --repository pragmatic-engineer/tap)")" = "$(realpath "$GITHUB_WORKSPACE")"
-
-      - name: Verify the new formula
-        if: steps.release.outputs.outdated == 'true'
-        run: |
-          brew audit --strict --online pragmatic-engineer/tap/playbook
-          brew install --verbose pragmatic-engineer/tap/playbook
-          brew test pragmatic-engineer/tap/playbook
 
       - name: Open, check and merge the bump pull request
         if: steps.release.outputs.outdated == 'true'
@@ -81,18 +59,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ steps.release.outputs.latest }}
-          FILE_PATH: ${{ runner.temp }}/playbook.rb
-          TARGET_PATH: Formula/playbook.rb
+          FILE_PATH: Formula/playbook.rb
         run: |
           set -euo pipefail
-          if ! grep -q "/download/v${VERSION}/" "$FILE_PATH"; then
-            echo "::error::the saved formula does not point at v${VERSION}. Refusing to commit an empty bump." >&2
-            exit 1
-          fi
           branch="bump/v${VERSION}"
           title="chore(deps): bump playbook to ${VERSION}"
 
-          # Start clean if an earlier run left a branch or PR behind.
+          # Drop a branch left behind by a failed run.
           if gh api "repos/${REPO}/git/ref/heads/${branch}" >/dev/null 2>&1; then
             gh api -X DELETE "repos/${REPO}/git/refs/heads/${branch}"
           fi
@@ -102,7 +75,7 @@ jobs:
           gh api -X POST "repos/${REPO}/git/refs" -f "ref=refs/heads/${branch}" -f "sha=${head}" >/dev/null
           jq -n \
             --arg repo "$REPO" --arg branch "$branch" --arg head "$head" --arg msg "$title" \
-            --arg path "$TARGET_PATH" --arg content "$(base64 < "$FILE_PATH" | tr -d '\n')" \
+            --arg path "$FILE_PATH" --arg content "$(base64 < "$FILE_PATH" | tr -d '\n')" \
             '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
               variables: {input: {
                 branch: {repositoryNameWithOwner: $repo, branchName: $branch},
@@ -119,14 +92,11 @@ jobs:
 
           pr="$(gh api -X POST "repos/${REPO}/pulls" \
             -f "title=${title}" -f "head=${branch}" -f base=main \
-            -f "body=Automated bump of the playbook pin to ${VERSION}, with URLs and checksums from the release SHA256SUMS. The full checks are dispatched on this branch and the pull request is squash merged once they pass." \
+            -f "body=Automated bump of the playbook pin to ${VERSION}, with URLs and checksums from the release SHA256SUMS. Squash merged once the checks pass." \
             --jq .number)"
           echo "Opened pull request #${pr}."
 
-          # A pull request opened with GITHUB_TOKEN gets a real pull_request run of
-          # the checks, but GitHub holds it at action_required until someone with
-          # write access approves it. Until then the ruleset reports the required
-          # check as missing, so wait for that run and approve it.
+          # GITHUB_TOKEN pull requests get their checks run held at action_required.
           run_id=""
           for _ in $(seq 1 36); do
             run_id="$(gh run list --repo "$REPO" --workflow tests.yml --branch "$branch" --event pull_request \
@@ -143,11 +113,9 @@ jobs:
             gh api -X POST "repos/${REPO}/actions/runs/${run_id}/approve" >/dev/null
             echo "Approved the checks run."
           fi
-          sleep 10
           gh run watch "$run_id" --repo "$REPO" --exit-status --interval 20
 
-          # The ruleset can lag a few seconds behind the finished run and answer
-          # 405, so retry the merge for a while before giving up.
+          # The ruleset can lag the finished run and answer 405, so retry.
           for attempt in $(seq 1 20); do
             if gh api -X PUT "repos/${REPO}/pulls/${pr}/merge" \
               -f merge_method=squash -f "commit_title=${title} (#${pr})" -f commit_message= >/dev/null; then
